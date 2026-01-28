@@ -1,6 +1,6 @@
 from flask import Flask
-import psycopg2
-
+#  import psycopg2 - this line also triggers docker service
+# testing if this comment detects PostgreSQL
 app = Flask(__name__)
 
 @app.route('/')

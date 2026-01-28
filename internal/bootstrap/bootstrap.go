@@ -20,13 +20,19 @@ func Bootstrap(info *scanner.ProjectInfo) error {
 	if len(conflicts) > 0 {
 		return fmt.Errorf("detected %d conflicts", len(conflicts))
 	}
-	//3.get required services
+	//3. install dependencies
+	fmt.Println("\n📦 Setting up application environment...")
+	if err := installDependencies(info); err != nil {
+		return fmt.Errorf("failed to install dependencies: %w", err)
+	}
+
+	//4.get required services
 	serviceNode := g.GetServiceNodes()
 	if len(serviceNode) == 0 {
 		fmt.Println("No services required")
 		return nil
 	}
-	//4. generate service configurations
+	//5. generate service configurations
 	var serviceConfigs []services.ServiceConfig
 	for _, node := range serviceNode {
 		switch node.Name {
@@ -36,7 +42,7 @@ func Bootstrap(info *scanner.ProjectInfo) error {
 			serviceConfigs = append(serviceConfigs, services.GetRedisConfig())
 		}
 	}
-	//5. generate docker compose.yml
+	//6. generate docker compose.yml
 	fmt.Println("Generate docker-compose.yml")
 	if err := docker.GenerateComposeFile(serviceConfigs, info.Path); err != nil {
 		return fmt.Errorf("failed to generate docker-compose: %w", err)
