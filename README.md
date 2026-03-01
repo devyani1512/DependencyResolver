@@ -14,9 +14,9 @@ Automatic development environment bootstrap tool.
 go build -o depsol cmd/depsol/main.go
 ```
 
-## Usage
+## Usage for python-app
 ```bash
-./DepedencyResolver ./examples/python-app
+./depsol run examples/python-app 
 ```
 
 ## Architecture
