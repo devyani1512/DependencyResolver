@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-// declaring functions
-// scanproject - detects project type and dependencies
+// ScanProject detects project type and dependencies
 func ScanProject(path string) (*ProjectInfo, error) {
 	info := &ProjectInfo{
 		Path:         path,
@@ -16,32 +16,204 @@ func ScanProject(path string) (*ProjectInfo, error) {
 		Services:     []ServiceRequirement{},
 	}
 
-	//check for python project
-	if fileExists(filepath.Join(path, "requirements.txt")) {
+	// Check for Python project
+	hasPythonFiles := fileExists(filepath.Join(path, "app.py")) || hasFilesWithExtension(path, ".py")
+	hasRequirementsTxt := fileExists(filepath.Join(path, "requirements.txt"))
+
+	if hasPythonFiles || hasRequirementsTxt {
 		info.Type = "python"
-		deps, err := ParsePythonDependencies(path)
+
+		// ALWAYS scan code for imports
+		fmt.Println(" Scanning Python code for imports...")
+		codeImports, err := DetectPythonImports(path)
 		if err != nil {
-			return nil, fmt.Errorf("failted to parse python dependencies: %w", err)
+			return nil, fmt.Errorf("failed to detect imports: %w", err)
 		}
-		info.Dependencies = deps
+		codeImports = FilterPythonStdLib(codeImports)
+
+		// Read existing requirements.txt
+		var existingDeps []Dependency
+		if hasRequirementsTxt {
+			existingDeps, _ = ParsePythonDependencies(path)
+		}
+
+		// Check if requirements.txt needs updating
+		needsUpdate := requirementsNeedsUpdate(existingDeps, codeImports)
+
+		if needsUpdate {
+			fmt.Println(" Code imports changed, updating requirements.txt...")
+
+			// Merge: keep existing versions, add new packages
+			depMap := make(map[string]Dependency)
+
+			// Start with existing (preserves versions)
+			for _, dep := range existingDeps {
+				depMap[dep.Name] = dep
+			}
+
+			// Add new imports
+			for _, imp := range codeImports {
+				pkg := MapPythonImportToPackage(imp)
+				if _, exists := depMap[pkg]; !exists {
+					depMap[pkg] = Dependency{
+						Name:    pkg,
+						Version: "",
+						Source:  "auto-detected",
+					}
+				}
+			}
+
+			// Convert back to slice
+			info.Dependencies = []Dependency{}
+			for _, dep := range depMap {
+				info.Dependencies = append(info.Dependencies, dep)
+			}
+
+			// Regenerate requirements.txt
+			if err := GeneratePythonRequirements(path, info.Dependencies); err != nil {
+				fmt.Printf("  Warning: Could not update requirements.txt: %v\n", err)
+			} else {
+				fmt.Println(" Updated requirements.txt")
+			}
+		} else if len(existingDeps) > 0 {
+			fmt.Println(" Using existing requirements.txt (up to date)")
+			info.Dependencies = existingDeps
+		} else {
+			// No requirements.txt and no imports found
+			fmt.Println("  No dependencies detected")
+		}
+
+		// ALWAYS detect services (important!)
 		info.Services = DetectPythonServices(path)
+
 		return info, nil
 	}
 
-	//similarly check for node project
-	if fileExists(filepath.Join(path, "package.json")) {
+	// Check for Node.js project
+	hasPackageJson := fileExists(filepath.Join(path, "package.json"))
+	hasJsFiles := hasFilesWithExtension(path, ".js")
+
+	if hasPackageJson || hasJsFiles {
 		info.Type = "node"
-		deps, err := ParseNodeDependencies(path)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse node dependencies : %w", err)
+
+		// Similar logic for Node
+		if hasPackageJson {
+			deps, err := ParseNodeDependencies(path)
+			if err == nil {
+				info.Dependencies = deps
+				fmt.Println(" Using existing package.json")
+			}
+		} else {
+			fmt.Println(" Auto-detecting Node.js imports...")
+			imports, _ := DetectNodeImports(path)
+			imports = FilterNodeBuiltins(imports)
+
+			if len(imports) > 0 {
+				fmt.Printf("   Found imports: %v\n", imports)
+
+				for _, imp := range imports {
+					info.Dependencies = append(info.Dependencies, Dependency{
+						Name:    imp,
+						Version: "latest",
+						Source:  "auto-detected",
+					})
+				}
+
+				GenerateNodePackageJson(path, info.Dependencies)
+			}
 		}
-		info.Dependencies = deps
+
 		info.Services = DetectNodeServices(path)
 		return info, nil
 	}
-	return nil, fmt.Errorf("unknown project type - no requirements.txt or package.json found")
+
+	return nil, fmt.Errorf("unknown project type - no Python or Node.js files found")
 }
+
+// requirementsNeedsUpdate checks if code imports match requirements.txt
+func requirementsNeedsUpdate(existingDeps []Dependency, codeImports []string) bool {
+	// Build set of packages in requirements.txt
+	existingPackages := make(map[string]bool)
+	for _, dep := range existingDeps {
+		existingPackages[dep.Name] = true
+	}
+
+	// Check if any code import is missing from requirements.txt
+	for _, imp := range codeImports {
+		pkg := MapPythonImportToPackage(imp)
+		if !existingPackages[pkg] {
+			fmt.Printf("   → New import detected: %s\n", pkg)
+			return true
+		}
+	}
+
+	return false
+}
+
+func GeneratePythonRequirements(projectPath string, deps []Dependency) error {
+	reqFile := filepath.Join(projectPath, "requirements.txt")
+
+	var lines []string
+	lines = append(lines, "# Auto-generated by DependencyResolver")
+	lines = append(lines, "# Feel free to edit versions or add more packages")
+	lines = append(lines, "")
+
+	for _, dep := range deps {
+		if dep.Version == "" || dep.Version == "*" {
+			lines = append(lines, dep.Name)
+		} else {
+			lines = append(lines, dep.Name+dep.Version)
+		}
+	}
+
+	content := strings.Join(lines, "\n") + "\n"
+	return os.WriteFile(reqFile, []byte(content), 0644)
+}
+
+func GenerateNodePackageJson(projectPath string, deps []Dependency) error {
+	pkgFile := filepath.Join(projectPath, "package.json")
+
+	depsMap := make(map[string]string)
+	for _, dep := range deps {
+		version := dep.Version
+		if version == "" {
+			version = "latest"
+		}
+		depsMap[dep.Name] = version
+	}
+
+	content := `{
+  "name": "app",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+`
+	i := 0
+	total := len(depsMap)
+	for name, version := range depsMap {
+		i++
+		comma := ","
+		if i == total {
+			comma = ""
+		}
+		content += fmt.Sprintf("    \"%s\": \"%s\"%s\n", name, version, comma)
+	}
+	content += `  }
+}
+`
+
+	return os.WriteFile(pkgFile, []byte(content), 0644)
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func hasFilesWithExtension(dir, ext string) bool {
+	files, err := filepath.Glob(filepath.Join(dir, "*"+ext))
+	return err == nil && len(files) > 0
 }

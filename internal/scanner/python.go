@@ -1,6 +1,5 @@
 package scanner
 
-//bufio reads file line by line
 import (
 	"bufio"
 	"os"
@@ -8,38 +7,37 @@ import (
 	"strings"
 )
 
-// reads requirements.txt and extracts dependencies
+// ParsePythonDependencies reads requirements.txt
 func ParsePythonDependencies(projectPath string) ([]Dependency, error) {
 	reqFile := filepath.Join(projectPath, "requirements.txt")
 	file, err := os.Open(reqFile)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close() //file closing
+	defer file.Close()
+
 	var deps []Dependency
-	scanner := bufio.NewScanner(file) //creates buffered scanner - reads file line by line
+	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
-		//to skip empth lines and comments
+		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		//parse dependency
+
 		dep := parsePythonLine(line)
 		deps = append(deps, dep)
 	}
+
 	return deps, scanner.Err()
 }
 
-// to parse single requirement.txt line
 func parsePythonLine(line string) Dependency {
-	//to handle fomats like flask == 2.0.0
-	//op gets operator value
 	for _, op := range []string{"==", ">=", "<=", "~=", ">", "<"} {
 		if strings.Contains(line, op) {
-			parts := strings.Split(line, op) //seperating package name from version
+			parts := strings.Split(line, op)
 			return Dependency{
 				Name:    strings.TrimSpace(parts[0]),
 				Version: op + strings.TrimSpace(parts[1]),
@@ -47,47 +45,74 @@ func parsePythonLine(line string) Dependency {
 			}
 		}
 	}
-	//no version specified - if there was no version given
+
 	return Dependency{
 		Name:    strings.TrimSpace(line),
-		Version: "*",
+		Version: "",
 		Source:  "requirements.txt",
 	}
 }
 
-// mark later to add recursive scanning
-// detect pythonservices and detects required servcies form python code
+// DetectPythonServices detects required services from Python project
 func DetectPythonServices(projectPath string) []ServiceRequirement {
 	services := []ServiceRequirement{}
-	//read python files to detect database imports
-	//this is a simplified version
-	//later we will recursively scan .py files
+	foundPostgres := false
+	foundRedis := false
 
-	//check for common patterns
+	// Check requirements.txt
+	reqFile := filepath.Join(projectPath, "requirements.txt")
+	if content, err := os.ReadFile(reqFile); err == nil {
+		text := strings.ToLower(string(content))
+
+		if strings.Contains(text, "psycopg") || strings.Contains(text, "postgresql") {
+			services = append(services, ServiceRequirement{
+				Name:    "postgres",
+				Version: "14",
+				Reason:  "Found PostgreSQL in requirements.txt",
+			})
+			foundPostgres = true
+		}
+
+		if strings.Contains(text, "redis") {
+			services = append(services, ServiceRequirement{
+				Name:    "redis",
+				Version: "latest",
+				Reason:  "Found Redis in requirements.txt",
+			})
+			foundRedis = true
+		}
+	}
+
+	// Check Python files
 	files, _ := filepath.Glob(filepath.Join(projectPath, "*.py"))
 	for _, file := range files {
 		content, err := os.ReadFile(file)
 		if err != nil {
 			continue
 		}
-		text := string(content)
-		//detect postgreSQL
-		//static analysis
-		if strings.Contains(text, "psycopg2") || strings.Contains(text, "postgresql") {
+
+		text := strings.ToLower(string(content))
+
+		if !foundPostgres && (strings.Contains(text, "psycopg") ||
+			strings.Contains(text, "postgresql") ||
+			strings.Contains(text, "postgres")) {
 			services = append(services, ServiceRequirement{
 				Name:    "postgres",
 				Version: "14",
-				Reason:  "Detected psycopg2 import",
+				Reason:  "Detected PostgreSQL in code",
 			})
+			foundPostgres = true
 		}
-		//detect redis
-		if strings.Contains(text, "import redis") || strings.Contains(text, "Redis") {
+
+		if !foundRedis && strings.Contains(text, "redis") {
 			services = append(services, ServiceRequirement{
 				Name:    "redis",
 				Version: "latest",
-				Reason:  "Detected redis import",
+				Reason:  "Detected Redis in code",
 			})
+			foundRedis = true
 		}
 	}
+
 	return services
 }

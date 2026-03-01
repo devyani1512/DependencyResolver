@@ -1,11 +1,12 @@
 from flask import Flask
-#  import psycopg2 - this line also triggers docker service
-# testing if this comment detects PostgreSQL
+import numpy as np
+import psycopg2  # ← NEW LINE
+
 app = Flask(__name__)
 
 @app.route('/')
 def hello():
-    return "This is your dependency resolver!"
+    return "Flask + Numpy + PostgreSQL!"
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=8000)

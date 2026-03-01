@@ -23,7 +23,6 @@ func installDependencies(info *scanner.ProjectInfo) error {
 }
 
 func setupPythonEnvironment(projectPath string) error {
-	// CONVERT TO ABSOLUTE PATH FIRST
 	absProjectPath, err := filepath.Abs(projectPath)
 	if err != nil {
 		return fmt.Errorf("failed to get absolute path: %w", err)
@@ -31,14 +30,13 @@ func setupPythonEnvironment(projectPath string) error {
 
 	venvPath := filepath.Join(absProjectPath, "venv")
 
-	// Step 1: Check if Python 3 is available
 	pythonCmd := findPythonCommand()
 	if pythonCmd == "" {
 		return fmt.Errorf("python3 or python not found - please install Python 3")
 	}
 	fmt.Printf("  → Using Python: %s\n", pythonCmd)
 
-	// Step 2: Create virtual environment
+	// Create venv if needed
 	if _, err := os.Stat(venvPath); os.IsNotExist(err) {
 		fmt.Println("  → Creating virtual environment...")
 		cmd := exec.Command(pythonCmd, "-m", "venv", venvPath)
@@ -50,32 +48,24 @@ func setupPythonEnvironment(projectPath string) error {
 		}
 		fmt.Println("   Virtual environment created")
 	} else {
-		fmt.Println("    Virtual environment already exists")
+		fmt.Println("    Virtual environment exists")
 	}
 
-	// Step 3: Get pip path (now absolute)
-	pipPath := getPipPath(venvPath)
-
-	// Verify pip exists
-	if _, err := os.Stat(pipPath); os.IsNotExist(err) {
-		return fmt.Errorf("pip not found at %s - venv may be corrupted, try: rm -rf %s", pipPath, venvPath)
+	venvPython := getVenvPython(venvPath)
+	if _, err := os.Stat(venvPython); os.IsNotExist(err) {
+		return fmt.Errorf("venv python not found at %s", venvPython)
 	}
-	fmt.Printf("  → Found pip at: %s\n", pipPath)
 
-	// Step 4: Upgrade pip
+	// Upgrade pip
 	fmt.Println("  → Upgrading pip...")
-	cmd := exec.Command(pipPath, "install", "--upgrade", "pip")
-	cmd.Dir = absProjectPath // Use absolute path here too
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Println("    Warning: Could not upgrade pip")
-	}
+	cmd := exec.Command(venvPython, "-m", "pip", "install", "--upgrade", "pip", "--quiet")
+	cmd.Dir = absProjectPath
+	cmd.Run()
 
-	// Step 5: Install dependencies
+	// Install dependencies
 	fmt.Println("  → Installing Python dependencies...")
-	cmd = exec.Command(pipPath, "install", "-r", "requirements.txt")
-	cmd.Dir = absProjectPath // Use absolute path here too
+	cmd = exec.Command(venvPython, "-m", "pip", "install", "-r", "requirements.txt")
+	cmd.Dir = absProjectPath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -84,60 +74,33 @@ func setupPythonEnvironment(projectPath string) error {
 	}
 
 	fmt.Println("   Python dependencies installed")
-	printActivationInstructions(venvPath)
+
+	// Save snapshot (NEW!)
+	saveRequirementsSnapshot(absProjectPath, venvPath)
 
 	return nil
 }
+func saveRequirementsSnapshot(projectPath, venvPath string) error {
+	reqFile := filepath.Join(projectPath, "requirements.txt")
+	snapshotFile := filepath.Join(venvPath, ".requirements.snapshot")
 
-// Helper: Find Python command (python3 or python)
-func findPythonCommand() string {
-	// Try python3 first (preferred)
-	if _, err := exec.LookPath("python3"); err == nil {
-		return "python3"
+	data, err := os.ReadFile(reqFile)
+	if err != nil {
+		return err
 	}
 
-	// Fall back to python
-	if _, err := exec.LookPath("python"); err == nil {
-		// Verify it's Python 3
-		cmd := exec.Command("python", "--version")
-		output, err := cmd.Output()
-		if err == nil && strings.Contains(string(output), "Python 3") {
-			return "python"
-		}
-	}
-
-	return ""
-}
-
-// Helper: Get correct pip path for platform
-func getPipPath(venvPath string) string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(venvPath, "Scripts", "pip.exe")
-	}
-	return filepath.Join(venvPath, "bin", "pip")
-}
-
-// Helper: Print activation instructions
-func printActivationInstructions(venvPath string) {
-	fmt.Println("\n   To activate virtual environment:")
-	if runtime.GOOS == "windows" {
-		fmt.Printf("     %s\\Scripts\\activate\n", venvPath)
-	} else {
-		fmt.Printf("     source %s/bin/activate\n", venvPath)
-	}
+	return os.WriteFile(snapshotFile, data, 0644)
 }
 
 func setupNodeEnvironment(projectPath string) error {
-	// Check if node_modules exists
-	nodeModulesPath := filepath.Join(projectPath, "node_modules")
-	if _, err := os.Stat(nodeModulesPath); err == nil {
-		fmt.Println("   node_modules already exists")
+	absProjectPath, err := filepath.Abs(projectPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	// Run npm install
 	fmt.Println("  → Installing Node.js dependencies...")
 	cmd := exec.Command("npm", "install")
-	cmd.Dir = projectPath
+	cmd.Dir = absProjectPath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -147,4 +110,35 @@ func setupNodeEnvironment(projectPath string) error {
 
 	fmt.Println("   Node dependencies installed")
 	return nil
+}
+
+func findPythonCommand() string {
+	// Try python3.12 first (best compatibility)
+	if _, err := exec.LookPath("python3.12"); err == nil {
+		return "python3.12"
+	}
+	// Try python3.11
+	if _, err := exec.LookPath("python3.11"); err == nil {
+		return "python3.11"
+	}
+	// Try python3
+	if _, err := exec.LookPath("python3"); err == nil {
+		return "python3"
+	}
+	// Try python
+	if _, err := exec.LookPath("python"); err == nil {
+		cmd := exec.Command("python", "--version")
+		output, _ := cmd.Output()
+		if strings.Contains(string(output), "Python 3") {
+			return "python"
+		}
+	}
+	return ""
+}
+
+func getVenvPython(venvPath string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(venvPath, "Scripts", "python.exe")
+	}
+	return filepath.Join(venvPath, "bin", "python")
 }
