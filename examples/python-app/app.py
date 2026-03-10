@@ -1,6 +1,6 @@
 from flask import Flask
 import numpy as np
-import psycopg2  # ← NEW LINE
+import psycopg2  
 
 app = Flask(__name__)
 

@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 
 	"github.com/devyani1512/DependencyResolver/internal/bootstrap"
+	"github.com/devyani1512/DependencyResolver/internal/docker"
+	"github.com/devyani1512/DependencyResolver/internal/graph"
 	"github.com/devyani1512/DependencyResolver/internal/scanner"
+	"github.com/devyani1512/DependencyResolver/internal/services"
 )
 
 func main() {
@@ -16,6 +19,9 @@ func main() {
 		switch os.Args[1] {
 		case "run":
 			runCommand()
+			return
+		case "dockerize": // NEW COMMAND
+			dockerizeCommand()
 			return
 		case "watch":
 			watchCommand()
@@ -29,26 +35,87 @@ func main() {
 	bootstrapCommand()
 }
 
-func printHelp() {
-	fmt.Println(` DependencyResolver - Smart Development Environment Tool
+func dockerizeCommand() {
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: depsol dockerize <project-path>")
+		fmt.Println("Example: depsol dockerize ./examples/python-app")
+		os.Exit(1)
+	}
 
-USAGE:
-  depsol <project-path>           Bootstrap environment
-  depsol run <project-path>       Run application (auto-bootstrap if needed)
-  depsol watch <project-path>     Watch mode with auto-reload
-  depsol help                     Show this help
+	projectPath := os.Args[2]
+	absPath, err := filepath.Abs(projectPath)
+	if err != nil {
+		fmt.Printf(" Invalid path: %v\n", err)
+		os.Exit(1)
+	}
 
-EXAMPLES:
-  depsol ./my-python-app          Create venv, install deps, start Docker
-  depsol run ./my-python-app      Auto-detect imports and run
-  depsol watch ./my-python-app    Watch for changes and auto-reload
+	fmt.Println(" Dockerizing Application")
+	fmt.Println("")
 
-FEATURES:
-  ✓ Auto-detects Python/Node.js projects
-  ✓ Scans code for imports (no manual requirements.txt!)
-  ✓ Creates virtual environments automatically
-  ✓ Detects and starts required services (PostgreSQL, Redis, etc.)
-  ✓ No manual activation needed - just run!`)
+	// Scan project
+	fmt.Printf("\n Scanning: %s\n", absPath)
+	projectInfo, err := scanner.ScanProject(absPath)
+	if err != nil {
+		fmt.Printf(" Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf(" Project type: %s\n", projectInfo.Type)
+
+	// Generate Dockerfile
+	fmt.Println("\n Generating Dockerfile...")
+	if err := docker.GenerateAppDockerfile(projectInfo); err != nil {
+		fmt.Printf(" Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("   Created Dockerfile")
+
+	// Get services
+	g := graph.BuildGraph(projectInfo)
+	serviceNodes := g.GetServiceNodes()
+
+	var serviceConfigs []services.ServiceConfig
+	for _, node := range serviceNodes {
+		switch node.Name {
+		case "postgres":
+			serviceConfigs = append(serviceConfigs, services.GetPostgresConfig())
+		case "redis":
+			serviceConfigs = append(serviceConfigs, services.GetRedisConfig())
+		}
+	}
+
+	// Generate full docker-compose.yml
+	fmt.Println(" Generating docker-compose.yml...")
+	if err := docker.GenerateFullDockerCompose(projectInfo, serviceConfigs); err != nil {
+		fmt.Printf(" Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("    Created docker-compose.yml")
+
+	// Generate .dockerignore
+	dockerignore := `venv/
+node_modules/
+__pycache__/
+*.pyc
+.git/
+.env
+*.log
+.DS_Store
+`
+	dockerignorePath := filepath.Join(absPath, ".dockerignore")
+	if err := os.WriteFile(dockerignorePath, []byte(dockerignore), 0644); err != nil {
+		fmt.Printf("  Warning: Could not create .dockerignore: %v\n", err)
+	} else {
+		fmt.Println("    Created .dockerignore")
+	}
+
+	fmt.Println("\n Dockerization complete!")
+	fmt.Println("\n To build and run:")
+	fmt.Printf("   cd %s\n", absPath)
+	fmt.Println("   docker-compose up --build")
+	fmt.Println("\n To stop:")
+	fmt.Println("   docker-compose down")
+	fmt.Println("\n Now your app can run on any machine with just Docker!")
 }
 
 func bootstrapCommand() {
@@ -167,4 +234,26 @@ func runCommand() {
 func watchCommand() {
 	fmt.Println(" Watch mode to be integrated later!")
 	fmt.Println("For now, use: depsol run <project-path>")
+}
+func printHelp() {
+	fmt.Println(` DependencyResolver - Smart Development Environment Tool
+
+USAGE:
+  depsol <project-path>           Bootstrap environment
+  depsol run <project-path>       Run application (auto-bootstrap if needed)
+  depsol dockerize <project-path> Generate Dockerfile + docker-compose.yml
+  depsol help                     Show this help
+
+EXAMPLES:
+  depsol ./my-python-app          Create venv, install deps, start Docker
+  depsol run ./my-python-app      Auto-detect imports and run
+  depsol dockerize ./my-app       Make it Docker-ready
+
+FEATURES:
+  ✓ Auto-detects Python/Node.js projects
+  ✓ Scans code for imports (no manual requirements.txt!)
+  ✓ Creates virtual environments automatically
+  ✓ Detects and starts required services (PostgreSQL, Redis, etc.)
+  ✓ No manual activation needed - just run!
+  ✓ Dockerize your entire stack with one command`)
 }
