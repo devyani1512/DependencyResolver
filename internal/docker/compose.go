@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/devyani1512/DependencyResolver/internal/services"
+	"github.com/depsolver/resolver/internal/services"
 )
 
 // this function creates docker-compose.yml
@@ -14,7 +14,7 @@ func GenerateComposeFile(serviceConfigs []services.ServiceConfig, outputPath str
 	for _, svc := range serviceConfigs {
 		yaml += fmt.Sprintf("  %s:\n", svc.Name)
 		yaml += fmt.Sprintf("    image: %s\n", svc.Image)
-		yaml += fmt.Sprintf("    ports:\n")
+		yaml += "    ports:\n"
 		yaml += fmt.Sprintf("      - \"%d:%d\"\n", svc.Port, svc.Port)
 
 		if len(svc.Environment) > 0 {

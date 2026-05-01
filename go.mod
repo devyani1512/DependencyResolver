@@ -1,3 +1,3 @@
-module github.com/devyani1512/DependencyResolver
+module github.com/depsolver/resolver
 
-go 1.24.0
+go 1.21

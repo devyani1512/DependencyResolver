@@ -1,6 +1,6 @@
 package graph
 
-import "github.com/devyani1512/DependencyResolver/internal/scanner"
+import "github.com/depsolver/resolver/internal/scanner"
 
 type DependencyGraph struct {
 	Nodes map[string]*Node

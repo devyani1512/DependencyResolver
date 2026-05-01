@@ -1,6 +1,6 @@
 package conflict
 
-import "github.com/devyani1512/DependencyResolver/internal/graph"
+import "github.com/depsolver/resolver/internal/graph"
 
 // DetectConflicts analyzes dependency graph for conflicts
 func DetectConflicts(g *graph.DependencyGraph) []Conflict {
