@@ -5,27 +5,16 @@ import (
 	"strings"
 )
 
-// Solver orchestrates the entire dependency resolution pipeline.
-// It accepts any RegistryClient so it works for both PyPI and npm.
+// Solver orchestrates the entire dependency resolution pipeline
 type Solver struct {
-	registry RegistryClient
+	registry *PyPIClient
 	graph    *DepGraph
 	pubgrub  *PubGrubSolver
 	verbose  bool
 }
 
-// NewSolver creates a Python (PyPI) solver — default
 func NewSolver(verbose bool) *Solver {
-	return NewSolverWithRegistry(NewPyPIClient(verbose), verbose)
-}
-
-// NewNodeSolver creates a Node (npm) solver
-func NewNodeSolver(verbose bool) *Solver {
-	return NewSolverWithRegistry(NewNpmClient(verbose), verbose)
-}
-
-// NewSolverWithRegistry creates a solver with any RegistryClient
-func NewSolverWithRegistry(registry RegistryClient, verbose bool) *Solver {
+	registry := NewPyPIClient(verbose)
 	return &Solver{
 		registry: registry,
 		graph:    NewDepGraph(),
@@ -40,7 +29,7 @@ func (s *Solver) log(msg string) {
 	}
 }
 
-// Resolve takes root dependencies and produces a full resolution
+// Resolve is the main entry point: takes root dependencies and produces a resolution
 func (s *Solver) Resolve(rootDeps []Dependency) (*Resolution, error) {
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════╗")
@@ -48,13 +37,17 @@ func (s *Solver) Resolve(rootDeps []Dependency) (*Resolution, error) {
 	fmt.Println("╚══════════════════════════════════════════════╝")
 	fmt.Println()
 
-	fmt.Printf("→ Fetching package metadata from registry...\n")
+	fmt.Printf("→ Fetching package metadata from PyPI...\n")
+
+	// Run PubGrub solver
 	fmt.Printf("→ Running PubGrub solver...\n")
 	result := s.pubgrub.Solve(rootDeps)
 
+	// Build graph from decisions
 	fmt.Printf("→ Building dependency graph...\n")
 	s.buildGraph(rootDeps, result)
 
+	// Print solver steps
 	if s.verbose && len(result.Steps) > 0 {
 		fmt.Println("\nSolver trace:")
 		for _, step := range result.Steps {
